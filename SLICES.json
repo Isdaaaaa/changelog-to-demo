@@ -2,7 +2,7 @@
   {
     "id": "slice-000",
     "name": "Bootstrap project skeleton",
-    "status": "in_progress",
+    "status": "done",
     "notes": "Set up Next.js, linting, Tailwind, basic layout."
   },
   {

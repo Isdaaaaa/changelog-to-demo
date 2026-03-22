@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 
 import { parseChangeItems, SAMPLE_RELEASE, type AudienceTag, type ChangeType } from "./change-parser";
 import { generateDemoFlow } from "./demo-flow";
+import { generateLaunchRecap, generateLaunchThread } from "./launch-content";
 import { buildNarrativeGroups } from "./narrative-engine";
 
 const audienceLabels: Record<AudienceTag, string> = {
@@ -43,14 +44,6 @@ function compileDemoText(audience: AudienceTag, steps: ReturnType<typeof generat
   return lines.join("\n");
 }
 
-function compileChangelogText(audience: AudienceTag, themeLines: string[]): string {
-  return [`${audienceLabels[audience]} · Changelog draft`, "", ...themeLines].join("\n");
-}
-
-function compileThreadText(audience: AudienceTag, posts: string[]): string {
-  return [`${audienceLabels[audience]} · Launch thread draft`, "", ...posts].join("\n");
-}
-
 export default function Home() {
   const [selectedAudience, setSelectedAudience] = useState<AudienceTag>("customer");
   const [activeTab, setActiveTab] = useState<OutputTab>("Demo");
@@ -60,36 +53,18 @@ export default function Home() {
   const parsed = useMemo(() => parseChangeItems(rawInput), [rawInput]);
   const narrative = useMemo(() => buildNarrativeGroups(parsed, selectedAudience), [parsed, selectedAudience]);
   const demoSteps = useMemo(() => generateDemoFlow(narrative.themes, selectedAudience), [narrative.themes, selectedAudience]);
-
-  const changelogLines = useMemo(
-    () =>
-      narrative.themes.flatMap((theme) => [
-        `## ${theme.title}`,
-        ...theme.bullets.slice(0, 3).map((bullet) => bullet.replace(/^-\s*/, "- ")),
-        "",
-      ]),
-    [narrative.themes],
+  const customerNarrative = useMemo(() => buildNarrativeGroups(parsed, "customer"), [parsed]);
+  const launchRecap = useMemo(
+    () => generateLaunchRecap(parsed, customerNarrative.themes, demoSteps, selectedAudience),
+    [customerNarrative.themes, demoSteps, parsed, selectedAudience],
   );
-
-  const launchPosts = useMemo(
-    () =>
-      narrative.themes.map((theme, idx) => {
-        const lead = theme.bullets[0]?.replace(/^-\s*/, "") ?? theme.intent;
-        return `${idx + 1}/${narrative.themes.length + 1} ${theme.title}: ${lead}`;
-      }),
-    [narrative.themes],
-  );
-
-  const threadWithClose = useMemo(() => {
-    if (!launchPosts.length) return [];
-    return [...launchPosts, `${launchPosts.length + 1}/${launchPosts.length + 1} Shipping with focus. Reply for detailed notes.`];
-  }, [launchPosts]);
+  const launchThread = useMemo(() => generateLaunchThread(launchRecap), [launchRecap]);
 
   const compiledText = useMemo(() => {
     if (activeTab === "Demo") return compileDemoText(selectedAudience, demoSteps);
-    if (activeTab === "Changelog") return compileChangelogText(selectedAudience, changelogLines);
-    return compileThreadText(selectedAudience, threadWithClose);
-  }, [activeTab, changelogLines, demoSteps, selectedAudience, threadWithClose]);
+    if (activeTab === "Changelog") return launchRecap.markdown;
+    return launchThread.map((tweet) => tweet.text).join("\n\n");
+  }, [activeTab, demoSteps, launchRecap.markdown, launchThread, selectedAudience]);
 
   const onUseSample = () => {
     setIsParsing(true);
@@ -248,24 +223,28 @@ export default function Home() {
 
           {activeTab === "Changelog" &&
             (isParsing ? (
-              <article className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">Refreshing changelog draft…</article>
-            ) : changelogLines.length === 0 ? (
+              <article className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">Generating launch recap…</article>
+            ) : parsed.length === 0 ? (
               <article className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                Changelog sections appear here once themes are detected.
+                Launch recap appears here with customer changelog and internal notes.
               </article>
             ) : (
               <article className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                <p className="font-mono text-xs uppercase tracking-[0.2em] text-blue-700">Changelog draft</p>
-                {narrative.themes.map((theme) => (
-                  <section key={`cl-${theme.key}`} className="rounded-lg border border-slate-200 bg-white p-3">
-                    <h3 className="text-sm font-semibold text-slate-900">{theme.title}</h3>
-                    <ul className="mt-2 space-y-1 text-sm text-slate-700">
-                      {theme.bullets.slice(0, 3).map((bullet, idx) => (
-                        <li key={`${theme.key}-ch-${idx}`} className="rounded bg-slate-50 px-2 py-1">
-                          {bullet}
-                        </li>
-                      ))}
-                    </ul>
+                <p className="font-mono text-xs uppercase tracking-[0.2em] text-blue-700">{launchRecap.heading}</p>
+                {launchRecap.sections.map((section) => (
+                  <section key={section.title} className="rounded-lg border border-slate-200 bg-white p-3">
+                    <h3 className="text-sm font-semibold text-slate-900">## {section.title}</h3>
+                    {section.bullets.length === 0 ? (
+                      <p className="mt-2 text-sm text-slate-500">- No highlights yet.</p>
+                    ) : (
+                      <ul className="mt-2 space-y-1 text-sm text-slate-700">
+                        {section.bullets.map((bullet) => (
+                          <li key={`${section.title}-${bullet}`} className="rounded bg-slate-50 px-2 py-1 font-mono text-[13px]">
+                            - {bullet}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </section>
                 ))}
               </article>
@@ -273,18 +252,21 @@ export default function Home() {
 
           {activeTab === "Launch thread" &&
             (isParsing ? (
-              <article className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">Drafting launch thread…</article>
-            ) : threadWithClose.length === 0 ? (
+              <article className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">Drafting social thread…</article>
+            ) : launchThread.length === 0 ? (
               <article className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                Launch thread cards will appear here when release items are available.
+                Social thread cards appear here when release items are available.
               </article>
             ) : (
               <article className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-4">
                 <p className="font-mono text-xs uppercase tracking-[0.2em] text-blue-700">Launch thread draft</p>
-                {threadWithClose.map((post) => (
-                  <section key={post} className="rounded-lg border border-slate-200 bg-white p-3">
-                    <p className="text-sm text-slate-800">{post}</p>
-                    <p className="mt-1 text-xs text-slate-500">{post.length}/280 chars</p>
+                {launchThread.map((tweet) => (
+                  <section key={tweet.text} className="rounded-lg border border-slate-200 bg-white p-3">
+                    <p className="text-sm text-slate-800">{tweet.text}</p>
+                    <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+                      <span className="font-mono text-blue-700">tweet {tweet.index}</span>
+                      <span className={tweet.chars > 260 ? "font-semibold text-amber-700" : ""}>{tweet.chars}/280 chars</span>
+                    </div>
                   </section>
                 ))}
               </article>

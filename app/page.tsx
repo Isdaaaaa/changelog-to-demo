@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { parseChangeItems, SAMPLE_RELEASE, type AudienceTag, type ChangeType } from "./change-parser";
+import { generateDemoFlow } from "./demo-flow";
 import { buildNarrativeGroups } from "./narrative-engine";
 
 const audienceLabels: Record<AudienceTag, string> = {
@@ -33,6 +34,23 @@ function badgeForType(type: ChangeType) {
   }
 }
 
+function compileDemoText(audience: AudienceTag, steps: ReturnType<typeof generateDemoFlow>): string {
+  const lines = [`${audienceLabels[audience]} · Demo flow with speaking notes`];
+  for (const step of steps) {
+    lines.push(`\n${step.index}. ${step.title} (${step.durationLabel})`);
+    for (const note of step.speakingNotes) lines.push(`- ${note}`);
+  }
+  return lines.join("\n");
+}
+
+function compileChangelogText(audience: AudienceTag, themeLines: string[]): string {
+  return [`${audienceLabels[audience]} · Changelog draft`, "", ...themeLines].join("\n");
+}
+
+function compileThreadText(audience: AudienceTag, posts: string[]): string {
+  return [`${audienceLabels[audience]} · Launch thread draft`, "", ...posts].join("\n");
+}
+
 export default function Home() {
   const [selectedAudience, setSelectedAudience] = useState<AudienceTag>("customer");
   const [activeTab, setActiveTab] = useState<OutputTab>("Demo");
@@ -41,23 +59,37 @@ export default function Home() {
 
   const parsed = useMemo(() => parseChangeItems(rawInput), [rawInput]);
   const narrative = useMemo(() => buildNarrativeGroups(parsed, selectedAudience), [parsed, selectedAudience]);
+  const demoSteps = useMemo(() => generateDemoFlow(narrative.themes, selectedAudience), [narrative.themes, selectedAudience]);
 
-  const outputTitle =
-    activeTab === "Demo"
-      ? "Demo talking points"
-      : activeTab === "Changelog"
-        ? "Customer/internal changelog draft"
-        : "Launch thread draft";
+  const changelogLines = useMemo(
+    () =>
+      narrative.themes.flatMap((theme) => [
+        `## ${theme.title}`,
+        ...theme.bullets.slice(0, 3).map((bullet) => bullet.replace(/^-\s*/, "- ")),
+        "",
+      ]),
+    [narrative.themes],
+  );
+
+  const launchPosts = useMemo(
+    () =>
+      narrative.themes.map((theme, idx) => {
+        const lead = theme.bullets[0]?.replace(/^-\s*/, "") ?? theme.intent;
+        return `${idx + 1}/${narrative.themes.length + 1} ${theme.title}: ${lead}`;
+      }),
+    [narrative.themes],
+  );
+
+  const threadWithClose = useMemo(() => {
+    if (!launchPosts.length) return [];
+    return [...launchPosts, `${launchPosts.length + 1}/${launchPosts.length + 1} Shipping with focus. Reply for detailed notes.`];
+  }, [launchPosts]);
 
   const compiledText = useMemo(() => {
-    const lines = [`${audienceLabels[selectedAudience]} · ${outputTitle}`];
-    for (const theme of narrative.themes) {
-      lines.push(`\n${theme.title}`);
-      lines.push(theme.intent);
-      for (const bullet of theme.bullets) lines.push(bullet);
-    }
-    return lines.join("\n");
-  }, [narrative.themes, outputTitle, selectedAudience]);
+    if (activeTab === "Demo") return compileDemoText(selectedAudience, demoSteps);
+    if (activeTab === "Changelog") return compileChangelogText(selectedAudience, changelogLines);
+    return compileThreadText(selectedAudience, threadWithClose);
+  }, [activeTab, changelogLines, demoSteps, selectedAudience, threadWithClose]);
 
   const onUseSample = () => {
     setIsParsing(true);
@@ -176,40 +208,87 @@ export default function Home() {
             </div>
           </div>
 
-          {isParsing ? (
-            <article className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <p className="font-mono text-xs uppercase tracking-[0.2em] text-blue-700">Building narrative themes…</p>
-              <div className="h-16 animate-pulse rounded-lg bg-slate-200" />
-              <div className="h-16 animate-pulse rounded-lg bg-slate-200" />
-            </article>
-          ) : narrative.totalItems === 0 ? (
-            <article className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-              <p className="font-semibold text-slate-900">No {audienceLabels[selectedAudience].toLowerCase()} items yet.</p>
-              <p className="mt-1">Try feat/fix/perf/docs/chore/refactor lines, then switch audiences to inspect grouped narratives.</p>
-            </article>
-          ) : (
-            <article className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <p className="font-mono text-xs uppercase tracking-[0.2em] text-blue-700">{outputTitle}</p>
-              <div className="space-y-3">
-                {narrative.themes.map((theme) => (
-                  <section key={theme.key} className="rounded-lg border border-slate-200 bg-white p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <h3 className="text-sm font-semibold text-slate-900">{theme.title}</h3>
-                      <span className="rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">{theme.items.length} items</span>
+          {activeTab === "Demo" &&
+            (isParsing ? (
+              <article className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="font-mono text-xs uppercase tracking-[0.2em] text-blue-700">Generating demo flow…</p>
+                <div className="h-16 animate-pulse rounded-lg bg-slate-200" />
+                <div className="h-16 animate-pulse rounded-lg bg-slate-200" />
+              </article>
+            ) : demoSteps.length === 0 ? (
+              <article className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                <p className="font-semibold text-slate-900">No demo flow yet.</p>
+                <p className="mt-1">Add release bullets to generate 4–7 timed steps with speaking notes.</p>
+              </article>
+            ) : (
+              <article className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="font-mono text-xs uppercase tracking-[0.2em] text-blue-700">Demo flow & speaking notes</p>
+                {demoSteps.map((step) => (
+                  <section key={step.index} className="rounded-lg border border-slate-200 bg-white p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <h3 className="text-sm font-semibold text-slate-900">
+                        <span className="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-600 text-xs text-white">
+                          {step.index}
+                        </span>
+                        {step.title}
+                      </h3>
+                      <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">{step.durationLabel}</span>
                     </div>
-                    <p className="mt-1 text-xs text-slate-500">{theme.intent}</p>
                     <ul className="mt-2 space-y-1 text-sm text-slate-700">
-                      {theme.bullets.map((bullet, idx) => (
-                        <li key={`${theme.key}-${idx}`} className="rounded bg-slate-50 px-2 py-1">
-                          {bullet.replace(/^-\s*/, "")}
+                      {step.speakingNotes.map((note, idx) => (
+                        <li key={`${step.index}-${idx}`} className="rounded bg-slate-50 px-2 py-1">
+                          • {note}
                         </li>
                       ))}
                     </ul>
                   </section>
                 ))}
-              </div>
-            </article>
-          )}
+              </article>
+            ))}
+
+          {activeTab === "Changelog" &&
+            (isParsing ? (
+              <article className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">Refreshing changelog draft…</article>
+            ) : changelogLines.length === 0 ? (
+              <article className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                Changelog sections appear here once themes are detected.
+              </article>
+            ) : (
+              <article className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="font-mono text-xs uppercase tracking-[0.2em] text-blue-700">Changelog draft</p>
+                {narrative.themes.map((theme) => (
+                  <section key={`cl-${theme.key}`} className="rounded-lg border border-slate-200 bg-white p-3">
+                    <h3 className="text-sm font-semibold text-slate-900">{theme.title}</h3>
+                    <ul className="mt-2 space-y-1 text-sm text-slate-700">
+                      {theme.bullets.slice(0, 3).map((bullet, idx) => (
+                        <li key={`${theme.key}-ch-${idx}`} className="rounded bg-slate-50 px-2 py-1">
+                          {bullet}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+                ))}
+              </article>
+            ))}
+
+          {activeTab === "Launch thread" &&
+            (isParsing ? (
+              <article className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">Drafting launch thread…</article>
+            ) : threadWithClose.length === 0 ? (
+              <article className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+                Launch thread cards will appear here when release items are available.
+              </article>
+            ) : (
+              <article className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <p className="font-mono text-xs uppercase tracking-[0.2em] text-blue-700">Launch thread draft</p>
+                {threadWithClose.map((post) => (
+                  <section key={post} className="rounded-lg border border-slate-200 bg-white p-3">
+                    <p className="text-sm text-slate-800">{post}</p>
+                    <p className="mt-1 text-xs text-slate-500">{post.length}/280 chars</p>
+                  </section>
+                ))}
+              </article>
+            ))}
 
           <div className="flex flex-wrap gap-2">
             <button

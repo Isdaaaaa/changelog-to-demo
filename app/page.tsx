@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { parseChangeItems, SAMPLE_RELEASE, type AudienceTag, type ChangeType } from "./change-parser";
 import { generateDemoFlow } from "./demo-flow";
@@ -15,6 +15,8 @@ const audienceLabels: Record<AudienceTag, string> = {
 
 const outputTabs = ["Demo", "Changelog", "Launch thread"] as const;
 type OutputTab = (typeof outputTabs)[number];
+
+type OutputMap = Record<OutputTab, string>;
 
 function badgeForType(type: ChangeType) {
   switch (type) {
@@ -36,12 +38,27 @@ function badgeForType(type: ChangeType) {
 }
 
 function compileDemoText(audience: AudienceTag, steps: ReturnType<typeof generateDemoFlow>): string {
-  const lines = [`${audienceLabels[audience]} · Demo flow with speaking notes`];
+  const lines = [`# ${audienceLabels[audience]} · Demo flow with speaking notes`];
   for (const step of steps) {
-    lines.push(`\n${step.index}. ${step.title} (${step.durationLabel})`);
+    lines.push(`\n## ${step.index}. ${step.title} (${step.durationLabel})`);
     for (const note of step.speakingNotes) lines.push(`- ${note}`);
   }
   return lines.join("\n");
+}
+
+function compileThreadText(thread: ReturnType<typeof generateLaunchThread>): string {
+  return thread.map((tweet) => `### Tweet ${tweet.index}/${tweet.total}\n${tweet.text}`).join("\n\n");
+}
+
+function exportMarkdown(filename: string, text: string) {
+  if (!text.trim()) return;
+  const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export default function Home() {
@@ -49,6 +66,16 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<OutputTab>("Demo");
   const [rawInput, setRawInput] = useState("");
   const [isParsing, setIsParsing] = useState(false);
+  const [editedOutputs, setEditedOutputs] = useState<OutputMap>({
+    Demo: "",
+    Changelog: "",
+    "Launch thread": "",
+  });
+  const [touchedTabs, setTouchedTabs] = useState<Record<OutputTab, boolean>>({
+    Demo: false,
+    Changelog: false,
+    "Launch thread": false,
+  });
 
   const parsed = useMemo(() => parseChangeItems(rawInput), [rawInput]);
   const narrative = useMemo(() => buildNarrativeGroups(parsed, selectedAudience), [parsed, selectedAudience]);
@@ -60,34 +87,58 @@ export default function Home() {
   );
   const launchThread = useMemo(() => generateLaunchThread(launchRecap), [launchRecap]);
 
-  const compiledText = useMemo(() => {
-    if (activeTab === "Demo") return compileDemoText(selectedAudience, demoSteps);
-    if (activeTab === "Changelog") return launchRecap.markdown;
-    return launchThread.map((tweet) => tweet.text).join("\n\n");
-  }, [activeTab, demoSteps, launchRecap.markdown, launchThread, selectedAudience]);
+  const generatedOutputs = useMemo<OutputMap>(
+    () => ({
+      Demo: compileDemoText(selectedAudience, demoSteps),
+      Changelog: launchRecap.markdown,
+      "Launch thread": compileThreadText(launchThread),
+    }),
+    [demoSteps, launchRecap.markdown, launchThread, selectedAudience],
+  );
+
+  useEffect(() => {
+    setEditedOutputs((prev) => ({
+      Demo: touchedTabs.Demo ? prev.Demo : generatedOutputs.Demo,
+      Changelog: touchedTabs.Changelog ? prev.Changelog : generatedOutputs.Changelog,
+      "Launch thread": touchedTabs["Launch thread"] ? prev["Launch thread"] : generatedOutputs["Launch thread"],
+    }));
+  }, [generatedOutputs, touchedTabs]);
+
+  const activeOutput = editedOutputs[activeTab];
 
   const onUseSample = () => {
     setIsParsing(true);
+    setTouchedTabs({ Demo: false, Changelog: false, "Launch thread": false });
     setTimeout(() => {
       setRawInput(SAMPLE_RELEASE);
       setIsParsing(false);
     }, 450);
   };
 
-  const onCopyScript = async () => {
-    if (!compiledText.trim()) return;
-    await navigator.clipboard.writeText(compiledText);
+  const onCopyOutput = async () => {
+    if (!activeOutput.trim()) return;
+    await navigator.clipboard.writeText(activeOutput);
+  };
+
+  const onEditOutput = (value: string) => {
+    setTouchedTabs((prev) => ({ ...prev, [activeTab]: true }));
+    setEditedOutputs((prev) => ({ ...prev, [activeTab]: value }));
+  };
+
+  const onResetActiveOutput = () => {
+    setTouchedTabs((prev) => ({ ...prev, [activeTab]: false }));
+    setEditedOutputs((prev) => ({ ...prev, [activeTab]: generatedOutputs[activeTab] }));
   };
 
   const onExportMarkdown = () => {
-    if (!compiledText.trim()) return;
-    const blob = new Blob([compiledText], { type: "text/markdown;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `storyline-${selectedAudience}-${activeTab.toLowerCase().replace(/\s+/g, "-")}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
+    exportMarkdown(`storyline-${selectedAudience}-${activeTab.toLowerCase().replace(/\s+/g, "-")}.md`, activeOutput);
+  };
+
+  const onExportAllMarkdown = () => {
+    const bundle = outputTabs
+      .map((tab) => `# ${tab}\n\n${editedOutputs[tab].trim() || "_No content yet._"}`)
+      .join("\n\n---\n\n");
+    exportMarkdown(`storyline-${selectedAudience}-full.md`, bundle);
   };
 
   return (
@@ -272,13 +323,33 @@ export default function Home() {
               </article>
             ))}
 
+          <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="font-mono text-xs uppercase tracking-[0.2em] text-blue-700">Editable output ({activeTab})</p>
+              {touchedTabs[activeTab] && <span className="text-xs font-medium text-amber-700">Edited</span>}
+            </div>
+            <textarea
+              value={activeOutput}
+              onChange={(e) => onEditOutput(e.target.value)}
+              className="h-44 w-full resize-y rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-[13px] text-slate-800 outline-none ring-blue-500 focus:ring-2"
+              placeholder="Generated markdown will appear here..."
+            />
+          </div>
+
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={onCopyScript}
+              onClick={onCopyOutput}
               className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
             >
-              Copy script
+              Copy output
+            </button>
+            <button
+              type="button"
+              onClick={onResetActiveOutput}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+            >
+              Reset tab draft
             </button>
             <button
               type="button"
@@ -292,7 +363,14 @@ export default function Home() {
               onClick={onExportMarkdown}
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
             >
-              Export Markdown
+              Export tab Markdown
+            </button>
+            <button
+              type="button"
+              onClick={onExportAllMarkdown}
+              className="rounded-lg border border-amber-300 bg-amber-100 px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-200"
+            >
+              Export full Markdown
             </button>
           </div>
         </section>

@@ -1,0 +1,44 @@
+[
+  {
+    "id": "slice-000",
+    "name": "Bootstrap project skeleton",
+    "status": "todo",
+    "notes": "Set up Next.js, linting, Tailwind, basic layout."
+  },
+  {
+    "id": "slice-001",
+    "name": "Ingestion & diff parser",
+    "status": "todo",
+    "notes": "Paste/URL input, parse release notes or PR titles into structured change items."
+  },
+  {
+    "id": "slice-002",
+    "name": "Narrative grouping engine",
+    "status": "todo",
+    "notes": "Group changes by theme/audience; build pipelines for customer/internal/recruiter views."
+  },
+  {
+    "id": "slice-003",
+    "name": "Demo flow & speaking notes",
+    "status": "todo",
+    "notes": "Generate step-by-step demo outline with timing and talking points."
+  },
+  {
+    "id": "slice-004",
+    "name": "Launch recap & social copy",
+    "status": "todo",
+    "notes": "Produce launch summary, customer changelog, and sample social thread."
+  },
+  {
+    "id": "slice-005",
+    "name": "Editable outputs UI",
+    "status": "todo",
+    "notes": "Inline editing, copy buttons, export to markdown; keep client-only state."
+  },
+  {
+    "id": "slice-006",
+    "name": "Polish & sample dataset",
+    "status": "todo",
+    "notes": "Seed fake release, screenshots/GIF hooks, minimal branding."
+  }
+]

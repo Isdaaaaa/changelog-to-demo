@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { parseChangeItems, SAMPLE_RELEASE, type AudienceTag, type ChangeType } from "./change-parser";
 import { generateDemoFlow } from "./demo-flow";
@@ -17,6 +17,41 @@ const outputTabs = ["Demo", "Changelog", "Launch thread"] as const;
 type OutputTab = (typeof outputTabs)[number];
 
 type OutputMap = Record<OutputTab, string>;
+
+type SamplePreset = {
+  id: string;
+  name: string;
+  summary: string;
+  release: string;
+};
+
+type CaptureHook = {
+  id: string;
+  title: string;
+  format: "GIF" | "Screenshot";
+  fileName: string;
+  cue: string;
+};
+
+const SAMPLE_PRESETS: SamplePreset[] = [
+  {
+    id: "launch-week",
+    name: "Launch week",
+    summary: "Product launch blend: features, performance, docs, and rollout leadership.",
+    release: SAMPLE_RELEASE,
+  },
+  {
+    id: "platform-polish",
+    name: "Platform polish",
+    summary: "Post-launch cleanup focused on reliability, onboarding, and narrative-friendly wins.",
+    release: `- feat: Added workspace templates for faster first-time setup
+- fix: Resolved duplicate invoice email sends in billing flow
+- perf: Reduced page transition jank across settings screens
+- docs: Added troubleshooting guide for SSO provisioning
+- refactor: Consolidated audit log handlers into typed shared utilities
+- chore: Hardened release checklist automation for launch day handoff`,
+  },
+];
 
 function badgeForType(type: ChangeType) {
   switch (type) {
@@ -37,12 +72,47 @@ function badgeForType(type: ChangeType) {
   }
 }
 
-function compileDemoText(audience: AudienceTag, steps: ReturnType<typeof generateDemoFlow>): string {
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "")
+    .slice(0, 36);
+}
+
+function buildCaptureHooks(steps: ReturnType<typeof generateDemoFlow>, audience: AudienceTag): CaptureHook[] {
+  return steps.map((step, idx) => {
+    const format: CaptureHook["format"] = idx % 2 === 0 ? "GIF" : "Screenshot";
+    const audienceLabel = audienceLabels[audience].toLowerCase();
+
+    return {
+      id: `hook-${step.index}`,
+      title: `Step ${step.index}: ${step.title}`,
+      format,
+      fileName: `${String(step.index).padStart(2, "0")}-${slugify(step.title)}.${format === "GIF" ? "gif" : "png"}`,
+      cue: `${step.speakingNotes[0] ?? "Highlight the value in one sentence"} (${audienceLabel} angle)`,
+    };
+  });
+}
+
+function compileDemoText(
+  audience: AudienceTag,
+  steps: ReturnType<typeof generateDemoFlow>,
+  hooks: CaptureHook[],
+): string {
   const lines = [`# ${audienceLabels[audience]} · Demo flow with speaking notes`];
   for (const step of steps) {
     lines.push(`\n## ${step.index}. ${step.title} (${step.durationLabel})`);
     for (const note of step.speakingNotes) lines.push(`- ${note}`);
   }
+
+  if (hooks.length) {
+    lines.push("\n## Capture hooks (screenshots & GIFs)");
+    for (const hook of hooks) {
+      lines.push(`- [${hook.format}] ${hook.fileName} — ${hook.cue}`);
+    }
+  }
+
   return lines.join("\n");
 }
 
@@ -66,6 +136,9 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState<OutputTab>("Demo");
   const [rawInput, setRawInput] = useState("");
   const [isParsing, setIsParsing] = useState(false);
+  const [selectedSampleId, setSelectedSampleId] = useState<string>(SAMPLE_PRESETS[0].id);
+  const [loadedSampleName, setLoadedSampleName] = useState<string | null>(null);
+  const [copyState, setCopyState] = useState<"idle" | "done">("idle");
   const [editedOutputs, setEditedOutputs] = useState<OutputMap>({
     Demo: "",
     Changelog: "",
@@ -76,6 +149,7 @@ export default function Home() {
     Changelog: false,
     "Launch thread": false,
   });
+  const sampleLoadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const parsed = useMemo(() => parseChangeItems(rawInput), [rawInput]);
   const narrative = useMemo(() => buildNarrativeGroups(parsed, selectedAudience), [parsed, selectedAudience]);
@@ -86,14 +160,15 @@ export default function Home() {
     [customerNarrative.themes, demoSteps, parsed, selectedAudience],
   );
   const launchThread = useMemo(() => generateLaunchThread(launchRecap), [launchRecap]);
+  const captureHooks = useMemo(() => buildCaptureHooks(demoSteps, selectedAudience), [demoSteps, selectedAudience]);
 
   const generatedOutputs = useMemo<OutputMap>(
     () => ({
-      Demo: compileDemoText(selectedAudience, demoSteps),
+      Demo: compileDemoText(selectedAudience, demoSteps, captureHooks),
       Changelog: launchRecap.markdown,
       "Launch thread": compileThreadText(launchThread),
     }),
-    [demoSteps, launchRecap.markdown, launchThread, selectedAudience],
+    [captureHooks, demoSteps, launchRecap.markdown, launchThread, selectedAudience],
   );
 
   useEffect(() => {
@@ -104,20 +179,36 @@ export default function Home() {
     }));
   }, [generatedOutputs, touchedTabs]);
 
+  useEffect(() => {
+    return () => {
+      if (sampleLoadTimerRef.current) clearTimeout(sampleLoadTimerRef.current);
+    };
+  }, []);
+
   const activeOutput = editedOutputs[activeTab];
 
-  const onUseSample = () => {
+  const samplePreset = useMemo(
+    () => SAMPLE_PRESETS.find((preset) => preset.id === selectedSampleId) ?? SAMPLE_PRESETS[0],
+    [selectedSampleId],
+  );
+
+  const onUseSample = (preset = samplePreset) => {
     setIsParsing(true);
     setTouchedTabs({ Demo: false, Changelog: false, "Launch thread": false });
-    setTimeout(() => {
-      setRawInput(SAMPLE_RELEASE);
+    if (sampleLoadTimerRef.current) clearTimeout(sampleLoadTimerRef.current);
+    sampleLoadTimerRef.current = setTimeout(() => {
+      setRawInput(preset.release);
+      setLoadedSampleName(preset.name);
       setIsParsing(false);
+      sampleLoadTimerRef.current = null;
     }, 450);
   };
 
   const onCopyOutput = async () => {
     if (!activeOutput.trim()) return;
     await navigator.clipboard.writeText(activeOutput);
+    setCopyState("done");
+    setTimeout(() => setCopyState("idle"), 1200);
   };
 
   const onEditOutput = (value: string) => {
@@ -146,8 +237,15 @@ export default function Home() {
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 backdrop-blur">
         <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
           <div>
-            <p className="text-xs font-medium uppercase tracking-[0.18em] text-blue-600">Changelog to Demo</p>
+            <p className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-blue-600">
+              <span className="h-2 w-2 rounded-full bg-amber-500" />
+              Changelog to Demo
+              <span className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] tracking-[0.14em] text-blue-700">
+                beta
+              </span>
+            </p>
             <h1 className="text-lg font-semibold text-slate-900">Storyline Studio</h1>
+            <p className="text-xs text-slate-500">Release notes → polished demo narrative, changelog, and launch thread.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center rounded-xl border border-slate-300 bg-slate-50 p-1">
@@ -158,6 +256,7 @@ export default function Home() {
                     selectedAudience === audience ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-200"
                   }`}
                   type="button"
+                  aria-pressed={selectedAudience === audience}
                   onClick={() => setSelectedAudience(audience)}
                 >
                   {audienceLabels[audience]}
@@ -166,7 +265,7 @@ export default function Home() {
             </div>
             <button
               type="button"
-              onClick={onUseSample}
+              onClick={() => onUseSample(samplePreset)}
               className="rounded-xl border border-amber-300 bg-amber-100 px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-200"
             >
               Use sample release
@@ -180,6 +279,52 @@ export default function Home() {
           <div>
             <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-slate-500">Inputs & Grouping</h2>
             <p className="mt-1 text-sm text-slate-600">Paste release notes or PR bullets to extract grouped themes.</p>
+          </div>
+
+          <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p className="font-mono text-xs uppercase tracking-[0.2em] text-blue-700">Sample dataset</p>
+                <p className="mt-1 text-sm text-slate-700">Load a polished fake release to preview the full storytelling flow.</p>
+              </div>
+              <span className="rounded-full bg-white px-2 py-1 text-xs font-medium text-slate-600">
+                {samplePreset.release.split(/\r?\n/).filter(Boolean).length} bullets
+              </span>
+            </div>
+
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {SAMPLE_PRESETS.map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  aria-pressed={preset.id === selectedSampleId}
+                  onClick={() => setSelectedSampleId(preset.id)}
+                  className={`rounded-lg border px-3 py-2 text-left transition ${
+                    preset.id === selectedSampleId
+                      ? "border-blue-400 bg-white shadow-sm"
+                      : "border-blue-100 bg-blue-50/40 hover:border-blue-200 hover:bg-white"
+                  }`}
+                >
+                  <p className="text-sm font-semibold text-slate-900">{preset.name}</p>
+                  <p className="mt-1 text-xs text-slate-600">{preset.summary}</p>
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => onUseSample(samplePreset)}
+                className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-white hover:bg-blue-700"
+              >
+                Load selected sample
+              </button>
+              {loadedSampleName && (
+                <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700">
+                  Loaded: {loadedSampleName}
+                </span>
+              )}
+            </div>
           </div>
 
           <label className="block space-y-2">
@@ -269,6 +414,26 @@ export default function Home() {
                     </ul>
                   </section>
                 ))}
+
+                <section className="rounded-lg border border-blue-100 bg-blue-50/60 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold text-slate-900">Screenshot & GIF hook helpers</h3>
+                    <span className="rounded-full bg-white px-2 py-1 text-xs font-medium text-slate-600">
+                      {captureHooks.length} hooks
+                    </span>
+                  </div>
+                  <ul className="mt-2 space-y-2 text-sm text-slate-700">
+                    {captureHooks.map((hook) => (
+                      <li key={hook.id} className="rounded-lg border border-blue-100 bg-white p-2">
+                        <p className="font-medium text-slate-900">
+                          {hook.title} · <span className="text-blue-700">{hook.format}</span>
+                        </p>
+                        <p className="mt-1 font-mono text-xs text-slate-600">{hook.fileName}</p>
+                        <p className="mt-1 text-xs text-slate-600">{hook.cue}</p>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
               </article>
             ))}
 
@@ -326,7 +491,10 @@ export default function Home() {
           <div className="space-y-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
             <div className="flex items-center justify-between gap-3">
               <p className="font-mono text-xs uppercase tracking-[0.2em] text-blue-700">Editable output ({activeTab})</p>
-              {touchedTabs[activeTab] && <span className="text-xs font-medium text-amber-700">Edited</span>}
+              <div className="flex items-center gap-2">
+                {copyState === "done" && <span className="text-xs font-medium text-emerald-700">Copied</span>}
+                {touchedTabs[activeTab] && <span className="text-xs font-medium text-amber-700">Edited</span>}
+              </div>
             </div>
             <textarea
               value={activeOutput}

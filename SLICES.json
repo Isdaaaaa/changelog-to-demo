@@ -8,7 +8,7 @@
   {
     "id": "slice-001",
     "name": "Ingestion & diff parser",
-    "status": "in_progress",
+    "status": "done",
     "notes": "Paste/URL input, parse release notes or PR titles into structured change items."
   },
   {

@@ -14,7 +14,7 @@
   {
     "id": "slice-002",
     "name": "Narrative grouping engine",
-    "status": "todo",
+    "status": "in_progress",
     "notes": "Group changes by theme/audience; build pipelines for customer/internal/recruiter views."
   },
   {

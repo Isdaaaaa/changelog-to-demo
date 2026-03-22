@@ -2,81 +2,17 @@
 
 import { useMemo, useState } from "react";
 
-type ChangeType = "feat" | "fix" | "perf" | "docs" | "chore" | "refactor" | "other";
-type Audience = "customer" | "internal" | "recruiter";
+import { parseChangeItems, SAMPLE_RELEASE, type AudienceTag, type ChangeType } from "./change-parser";
+import { buildNarrativeGroups } from "./narrative-engine";
 
-type ChangeItem = {
-  id: string;
-  title: string;
-  type: ChangeType;
-  audiences: Audience[];
-  sourceLine?: number;
-};
-
-const audienceLabels: Record<Audience, string> = {
+const audienceLabels: Record<AudienceTag, string> = {
   customer: "Customer",
   internal: "Internal",
   recruiter: "Recruiter",
 };
 
-const outputTabs = ["Demo", "Changelog", "Launch thread"];
-
-const sampleRelease = `## v1.8.0\n- feat: Added guided import flow for first-time users\n- fix: Resolved dashboard chart lag for high-volume teams\n- refactor: Split parser pipeline into reusable modules\n- docs: Added integration playbook for onboarding\n1. perf: Improved API response time by 28%\n2. chore: tighten CI checks for release branches\n* Led cross-team launch prep and mentoring for onboarding owners`;
-
-const typePattern = /^(feat|fix|docs|chore|perf|refactor)\s*:\s*/i;
-const bulletPattern = /^\s*(?:[-*•]|\d+[.)])\s+/;
-
-function classifyType(line: string): ChangeType {
-  const match = line.match(typePattern);
-  if (!match) return "other";
-  return match[1].toLowerCase() as ChangeType;
-}
-
-function parseReleaseNotes(input: string): ChangeItem[] {
-  return input
-    .split("\n")
-    .map((raw, index) => ({ raw, index: index + 1 }))
-    .filter(({ raw }) => {
-      const trimmed = raw.trim();
-      return Boolean(trimmed) && (bulletPattern.test(trimmed) || typePattern.test(trimmed));
-    })
-    .map(({ raw, index }, i) => {
-      let cleaned = raw.trim().replace(bulletPattern, "");
-      const type = classifyType(cleaned);
-      if (type !== "other") cleaned = cleaned.replace(typePattern, "");
-      const title = cleaned.trim().replace(/\.$/, "");
-      const lower = title.toLowerCase();
-
-      const audiences = new Set<Audience>();
-
-      if (
-        ["feat", "fix", "perf"].includes(type) ||
-        /(user|customer|ui|dashboard|api|improv|experience|workflow|onboarding)/.test(lower)
-      ) {
-        audiences.add("customer");
-      }
-      if (
-        ["chore", "refactor", "docs"].includes(type) ||
-        /(internal|tooling|ci|build|test|docs|infra|pipeline|maintenance)/.test(lower)
-      ) {
-        audiences.add("internal");
-      }
-      if (/(leadership|cross-team|mentorship|mentor|architecture|performance impact|scal|ownership)/.test(lower)) {
-        audiences.add("recruiter");
-      }
-
-      if (audiences.size === 0) audiences.add("customer");
-
-      return {
-        id: `chg-${i + 1}`,
-        title,
-        type,
-        audiences: [...audiences],
-        sourceLine: index,
-      } satisfies ChangeItem;
-    })
-    .filter((item) => item.title.length > 0);
-}
+const outputTabs = ["Demo", "Changelog", "Launch thread"] as const;
+type OutputTab = (typeof outputTabs)[number];
 
 function badgeForType(type: ChangeType) {
   switch (type) {
@@ -98,22 +34,53 @@ function badgeForType(type: ChangeType) {
 }
 
 export default function Home() {
-  const [selectedAudience, setSelectedAudience] = useState<Audience>("customer");
+  const [selectedAudience, setSelectedAudience] = useState<AudienceTag>("customer");
+  const [activeTab, setActiveTab] = useState<OutputTab>("Demo");
   const [rawInput, setRawInput] = useState("");
   const [isParsing, setIsParsing] = useState(false);
 
-  const parsed = useMemo(() => parseReleaseNotes(rawInput), [rawInput]);
+  const parsed = useMemo(() => parseChangeItems(rawInput), [rawInput]);
+  const narrative = useMemo(() => buildNarrativeGroups(parsed, selectedAudience), [parsed, selectedAudience]);
 
-  const grouped = useMemo(() => {
-    return parsed.filter((item) => item.audiences.includes(selectedAudience));
-  }, [parsed, selectedAudience]);
+  const outputTitle =
+    activeTab === "Demo"
+      ? "Demo talking points"
+      : activeTab === "Changelog"
+        ? "Customer/internal changelog draft"
+        : "Launch thread draft";
+
+  const compiledText = useMemo(() => {
+    const lines = [`${audienceLabels[selectedAudience]} · ${outputTitle}`];
+    for (const theme of narrative.themes) {
+      lines.push(`\n${theme.title}`);
+      lines.push(theme.intent);
+      for (const bullet of theme.bullets) lines.push(bullet);
+    }
+    return lines.join("\n");
+  }, [narrative.themes, outputTitle, selectedAudience]);
 
   const onUseSample = () => {
     setIsParsing(true);
     setTimeout(() => {
-      setRawInput(sampleRelease);
+      setRawInput(SAMPLE_RELEASE);
       setIsParsing(false);
     }, 450);
+  };
+
+  const onCopyScript = async () => {
+    if (!compiledText.trim()) return;
+    await navigator.clipboard.writeText(compiledText);
+  };
+
+  const onExportMarkdown = () => {
+    if (!compiledText.trim()) return;
+    const blob = new Blob([compiledText], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `storyline-${selectedAudience}-${activeTab.toLowerCase().replace(/\s+/g, "-")}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -126,7 +93,7 @@ export default function Home() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center rounded-xl border border-slate-300 bg-slate-50 p-1">
-              {(Object.keys(audienceLabels) as Audience[]).map((audience) => (
+              {(Object.keys(audienceLabels) as AudienceTag[]).map((audience) => (
                 <button
                   key={audience}
                   className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
@@ -154,7 +121,7 @@ export default function Home() {
         <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div>
             <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-slate-500">Inputs & Grouping</h2>
-            <p className="mt-1 text-sm text-slate-600">Paste release notes or PR bullets to extract structured change items.</p>
+            <p className="mt-1 text-sm text-slate-600">Paste release notes or PR bullets to extract grouped themes.</p>
           </div>
 
           <label className="block space-y-2">
@@ -179,7 +146,7 @@ export default function Home() {
               <p className="mt-2 text-sm text-slate-500">No parsed items yet. Paste bullet points or use sample data.</p>
             ) : (
               <ul className="mt-3 space-y-2 text-sm text-slate-700">
-                {parsed.slice(0, 4).map((item) => (
+                {parsed.slice(0, 5).map((item) => (
                   <li key={item.id} className="flex items-start justify-between gap-2 rounded-lg border border-slate-200 bg-white p-2">
                     <span className="line-clamp-2">{item.title}</span>
                     <span className={`rounded px-2 py-0.5 text-xs font-medium ${badgeForType(item.type)}`}>{item.type}</span>
@@ -194,12 +161,13 @@ export default function Home() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-semibold uppercase tracking-[0.14em] text-slate-500">Outputs</h2>
             <div className="flex rounded-xl border border-slate-300 bg-slate-50 p-1">
-              {outputTabs.map((tab, idx) => (
+              {outputTabs.map((tab) => (
                 <button
                   key={tab}
                   type="button"
+                  onClick={() => setActiveTab(tab)}
                   className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
-                    idx === 0 ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-200"
+                    activeTab === tab ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-200"
                   }`}
                 >
                   {tab}
@@ -210,37 +178,45 @@ export default function Home() {
 
           {isParsing ? (
             <article className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <p className="font-mono text-xs uppercase tracking-[0.2em] text-blue-700">Grouping changes…</p>
+              <p className="font-mono text-xs uppercase tracking-[0.2em] text-blue-700">Building narrative themes…</p>
               <div className="h-16 animate-pulse rounded-lg bg-slate-200" />
               <div className="h-16 animate-pulse rounded-lg bg-slate-200" />
             </article>
-          ) : grouped.length === 0 ? (
+          ) : narrative.totalItems === 0 ? (
             <article className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
               <p className="font-semibold text-slate-900">No {audienceLabels[selectedAudience].toLowerCase()} items yet.</p>
-              <p className="mt-1">Try adding lines like feat:, fix:, docs:, chore:, perf:, or refactor: to seed this view.</p>
+              <p className="mt-1">Try feat/fix/perf/docs/chore/refactor lines, then switch audiences to inspect grouped narratives.</p>
             </article>
           ) : (
             <article className="space-y-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <p className="font-mono text-xs uppercase tracking-[0.2em] text-blue-700">
-                {audienceLabels[selectedAudience]} narrative queue · {grouped.length} item{grouped.length > 1 ? "s" : ""}
-              </p>
-              <ul className="space-y-3 text-sm text-slate-700">
-                {grouped.map((item) => (
-                  <li key={item.id} className="rounded-lg border border-slate-200 bg-white p-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <input type="checkbox" defaultChecked className="h-4 w-4 rounded border-slate-300 text-blue-600" />
-                      <p className="font-semibold text-slate-900">{item.title}</p>
-                      <span className={`rounded px-2 py-0.5 text-xs font-medium ${badgeForType(item.type)}`}>{item.type}</span>
+              <p className="font-mono text-xs uppercase tracking-[0.2em] text-blue-700">{outputTitle}</p>
+              <div className="space-y-3">
+                {narrative.themes.map((theme) => (
+                  <section key={theme.key} className="rounded-lg border border-slate-200 bg-white p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-sm font-semibold text-slate-900">{theme.title}</h3>
+                      <span className="rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">{theme.items.length} items</span>
                     </div>
-                    <p className="mt-1 text-xs text-slate-500">Source line {item.sourceLine ?? "n/a"}</p>
-                  </li>
+                    <p className="mt-1 text-xs text-slate-500">{theme.intent}</p>
+                    <ul className="mt-2 space-y-1 text-sm text-slate-700">
+                      {theme.bullets.map((bullet, idx) => (
+                        <li key={`${theme.key}-${idx}`} className="rounded bg-slate-50 px-2 py-1">
+                          {bullet.replace(/^-\s*/, "")}
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
                 ))}
-              </ul>
+              </div>
             </article>
           )}
 
           <div className="flex flex-wrap gap-2">
-            <button type="button" className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700">
+            <button
+              type="button"
+              onClick={onCopyScript}
+              className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
               Copy script
             </button>
             <button
@@ -250,7 +226,11 @@ export default function Home() {
             >
               Clear input
             </button>
-            <button type="button" className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+            <button
+              type="button"
+              onClick={onExportMarkdown}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+            >
               Export Markdown
             </button>
           </div>

@@ -32,7 +32,7 @@
   {
     "id": "slice-005",
     "name": "Editable outputs UI",
-    "status": "todo",
+    "status": "done",
     "notes": "Inline editing, copy buttons, export to markdown; keep client-only state."
   },
   {

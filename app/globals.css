@@ -16,9 +16,16 @@ body {
 }
 
 body {
-  background: radial-gradient(circle at top, #eff6ff 0%, var(--background) 35%);
+  background:
+    radial-gradient(circle at top, #dbeafe 0%, rgba(219, 234, 254, 0) 42%),
+    linear-gradient(180deg, #f8fafc 0%, #f8fafc 100%);
   color: var(--foreground);
   font-family: var(--font-inter), system-ui, sans-serif;
+}
+
+::selection {
+  background: #bfdbfe;
+  color: #0f172a;
 }
 
 button,
